@@ -7,7 +7,7 @@ clock, quarter, and category), then renders cross-session trends,
 practice-vs-game comparisons with statistical rigor, and category
 tactical signatures.
 
-**Live demo:** [https://01a157c3-c0a2-be2c-ae6c-735365017f1b.share.connect.posit.cloud/](https://01a157c3-c0a2-be2c-ae6c-735365017f1b.share.connect.posit.cloud/)
+**Live demo:** [https://01a157db-9f7e-82d4-a78d-6e2114dda3d9.share.connect.posit.cloud/](https://01a157db-9f7e-82d4-a78d-6e2114dda3d9.share.connect.posit.cloud/)
 
 **Production repo:** [LuisRodCast/aggies-play-call-tracker](https://github.com/LuisRodCast/aggies-play-call-tracker)
 (built for New Mexico State women's basketball)
