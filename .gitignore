@@ -1,0 +1,14 @@
+# =====================================================================
+# .gitignore  --  Play Call Tracker DEMO
+#
+# Keep the repo lean. The demo uses NO env-var secrets, but we still
+# excluded .Renviron in case someone drops one in by habit.
+# =====================================================================
+
+# Secrets — never commit (demo doesn't use env vars, but just in case)
+.Renviron
+.Rhistory
+
+# RStudio clutter
+.Rproj.user/
+*.Rproj

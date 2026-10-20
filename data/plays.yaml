@@ -1,0 +1,37 @@
+# =========================================================================
+# data/plays.yaml  --  DEMO playbook
+#
+# Generic basketball play names used by the demo. Not representative of
+# any real team's playbook. Add/remove entries freely -- the dropdown
+# refreshes on app restart.
+# =========================================================================
+
+plays:
+  # ---- Half-court sets ----
+  - ISO
+  - HORNS
+  - FLEX
+  - STAGGER
+  - PINCH-POST
+  - PNR-L
+  - PNR-R
+  - ELBOW
+  - SIDE-PNR
+  - SPAIN
+  - FLOPPY
+  # ---- Transition / Secondary ----
+  - FIST
+  - DRAG
+  - SPREAD
+  - PITCH-AHEAD
+  - FLOW
+  - RIM-RUN
+  # ---- Second-chance / zone offense ----
+  - PUT-BACK
+  - ZONE-OVER
+  - ZONE-SKIP
+  - BASELINE-SLIP
+  # ---- Specials / BLOB / SLOB ----
+  - BLOB-STACK
+  - SLOB-ZIPPER
+  - BOX-SET

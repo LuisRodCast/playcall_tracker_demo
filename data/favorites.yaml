@@ -1,0 +1,16 @@
+# =========================================================================
+# favorites.yaml  --  DEMO
+#
+# Plays pinned to a "Favorites" group at the top of the PLAY dropdown.
+# Must exactly match names in plays.yaml. Max 15 entries; extras ignored.
+# =========================================================================
+
+favorites:
+  - ISO
+  - HORNS
+  - PNR-L
+  - PNR-R
+  - FLEX
+  - DRAG
+  - FIST
+  - SPREAD
