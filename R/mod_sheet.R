@@ -19,23 +19,51 @@ mod_sheet_ui <- function(id) {
         tags$div(class = "sheet-sub",
                  textOutput(ns("sub"), inline = TRUE))
       ),
-      # Hand-built download link so Framework7 doesn't intercept the click.
-      # The "external" class + target="_blank" tell F7's router to let the
-      # browser handle it natively. The "shiny-download-link" class is what
-      # Shiny's JS binding attaches to -- the server-side downloadHandler
-      # keyed on ns("export_csv") works unchanged.
-      tags$a(
-        id       = ns("export_csv"),
-        class    = "shiny-download-link sheet-export-btn external",
-        href     = "",
-        target   = "_blank",
-        download = NA,
-        `data-ignore-cache` = "true",
-        HTML('<span class="dl-ico">&#8681;</span> Export CSV')
+      # Plain actionButton -- Framework7 handles native button clicks
+      # cleanly. The download itself is triggered client-side via Blob
+      # (see tags$script below + the observer in the server function);
+      # this avoids Shiny's downloadLink + F7-router conflict that made
+      # the previous target=_blank/external hack unreliable (CSV would
+      # open as text in a new tab on Safari/iPad instead of saving).
+      actionButton(
+        inputId = ns("export_csv_click"),
+        label   = HTML('<span class="dl-ico">&#8681;</span> Export CSV'),
+        class   = "sheet-export-btn"
       )
     ),
 
-    reactable::reactableOutput(ns("sheet_tbl"))
+    reactable::reactableOutput(ns("sheet_tbl")),
+
+    # Client-side download handler. Receives {content, filename} from
+    # the server, builds a Blob, synthesizes a hidden <a download>, and
+    # clicks it programmatically. Works in every browser including
+    # iPad Safari. The __registered guard prevents duplicate handler
+    # registration if the module re-renders.
+    tags$script(HTML(
+      "if (!window.__playcall_csv_dl_registered) {
+         Shiny.addCustomMessageHandler('playcall_csv_download', function(msg) {
+           try {
+             var blob = new Blob([msg.content],
+                                 {type: 'text/csv;charset=utf-8;'});
+             var url  = URL.createObjectURL(blob);
+             var a    = document.createElement('a');
+             a.href       = url;
+             a.download   = msg.filename;
+             a.style.cssText = 'display:none;';
+             document.body.appendChild(a);
+             a.click();
+             document.body.removeChild(a);
+             // Give the browser a moment to start the download before
+             // revoking the object URL (Safari in particular needs this).
+             setTimeout(function() { URL.revokeObjectURL(url); }, 1500);
+           } catch (err) {
+             console.error('[CSV download] failed:', err);
+             alert('CSV download failed: ' + err.message);
+           }
+         });
+         window.__playcall_csv_dl_registered = true;
+       }"
+    ))
   )
 }
 
@@ -105,42 +133,54 @@ mod_sheet_server <- function(id, app_state) {
       )
     })
 
-    # ---- CSV export --------------------------------------------------
-    output$export_csv <- downloadHandler(
-      filename = function() {
-        q <- input$quarter %||% "ALL"
-        sprintf("play_call_sheet_%s_%s.csv",
-                format(Sys.Date(), "%Y%m%d"),
-                q)
-      },
-      content = function(file) {
-        df <- q_df()
-        if (nrow(df) == 0) {
-          utils::write.csv(data.frame(note = "no data"),
-                           file, row.names = FALSE)
-          return()
-        }
-        out <- df |>
-          dplyr::transmute(
-            possession_id,
-            timestamp = format(ts, "%Y-%m-%d %H:%M:%S"),
-            quarter,
-            play,
-            category      = ifelse(is.na(category) | !nzchar(category),
-                                    "", category),
-            result,
-            points        = pts,
-            is_fga,
-            is_fgm,
-            is_turnover   = is_to,
-            is_foul,
-            ball_reversals,
-            paint_touches,
-            clock         = ifelse(is.na(clock), "", clock)
-          )
-        utils::write.csv(out, file, row.names = FALSE)
+    # ---- CSV export via Shiny custom-message handler -----------------
+    # Fired when the user clicks the Export CSV button. We build the
+    # CSV string server-side (same column shape as before) and ship it
+    # to the client, where the registered handler turns it into a Blob
+    # and triggers a native browser download. No downloadHandler, no
+    # Shiny download binding, no Framework7 router conflict.
+    observeEvent(input$export_csv_click, {
+      df    <- q_df()
+      q_lbl <- input$quarter %||% "ALL"
+      filename <- sprintf("play_call_sheet_%s_%s.csv",
+                          format(Sys.Date(), "%Y%m%d"), q_lbl)
+
+      if (nrow(df) == 0) {
+        shiny::showNotification("No plays logged this quarter yet.",
+                                type = "warning", duration = 3)
+        return()
       }
-    )
+
+      out <- df |>
+        dplyr::transmute(
+          possession_id,
+          timestamp = format(ts, "%Y-%m-%d %H:%M:%S"),
+          quarter,
+          play,
+          category    = ifelse(is.na(category) | !nzchar(category),
+                                "", category),
+          result,
+          points      = pts,
+          is_fga,
+          is_fgm,
+          is_turnover = is_to,
+          is_foul,
+          ball_reversals,
+          paint_touches,
+          clock       = ifelse(is.na(clock), "", clock)
+        )
+
+      # Capture write.csv's output into a character vector via a
+      # textConnection, then collapse to one string we can ship.
+      csv_lines <- character(0)
+      tc <- textConnection("csv_lines", open = "w", local = TRUE)
+      utils::write.csv(out, tc, row.names = FALSE)
+      close(tc)
+      csv_text <- paste(csv_lines, collapse = "\n")
+
+      session$sendCustomMessage("playcall_csv_download",
+        list(content = csv_text, filename = filename))
+    }, ignoreInit = TRUE)
   })
 }
 
