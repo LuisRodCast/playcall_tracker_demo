@@ -50,13 +50,13 @@ mod_trends_server <- function(id, app_state) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
-    # Reload the full pool whenever the visitor saves/deletes a session.
-    # Backed by the in-memory per-visitor store -- see R/db_demo.R.
+    # Reload the full pool whenever the user saves/deletes a session.
+    # Backed by Turso -- see R/db.R::db_load_all_possessions().
     all_poss <- reactive({
       app_state$history_bump
-      tryCatch(db_load_all_possessions(app_state),
+      tryCatch(db_load_all_possessions(),
                error = function(e) {
-                 message("[trends] store load failed: ", conditionMessage(e))
+                 message("[trends] DB load failed: ", conditionMessage(e))
                  NULL
                })
     })
@@ -78,9 +78,47 @@ mod_trends_server <- function(id, app_state) {
                  "'+ New Session') -- cross-session trends will populate ",
                  "automatically.")))
       }
+
+      # Available plays for the PPP-over-sessions selector, sorted by
+      # total possessions descending (most-used first) so the default
+      # pre-selection = top 3 most frequently called plays. The user
+      # can clear and pick any other combination, up to 3 at a time
+      # (enforced by selectizeInput's maxItems option).
+      plays_sorted <- df |>
+        dplyr::count(play, name = "n") |>
+        dplyr::arrange(dplyr::desc(n)) |>
+        dplyr::pull(play)
+      default_plays <- utils::head(plays_sorted, 3)
+
+      ppp_trend_card <- div(class = "chart-card",
+        tags$h4(class = "chart-title", "PPP BY PLAY OVER SESSIONS"),
+        div(style = paste0("margin:0 2px 8px 2px; padding:6px 8px; ",
+                            "background:#1A1A1F; border-radius:4px;"),
+          tags$label("Pick up to 3 plays to compare:",
+                     style = paste0("color:#A0A0A0; font-size:11px; ",
+                                     "display:block; margin-bottom:4px; ",
+                                     "text-transform:uppercase; ",
+                                     "letter-spacing:0.05em;")),
+          selectizeInput(
+            inputId  = ns("ppp_plays_selected"),
+            label    = NULL,
+            choices  = plays_sorted,
+            selected = default_plays,
+            multiple = TRUE,
+            width    = "100%",
+            options  = list(
+              maxItems    = 3,
+              placeholder = "Select up to 3 plays...",
+              plugins     = list("remove_button")
+            )
+          )
+        ),
+        plotOutput(ns("chart_ppp_trend"), height = "340px")
+      )
+
       tagList(
         div(class = "trends-grid",
-          chart_card(ns, "ppp_trend",   "PPP BY PLAY OVER SESSIONS"),
+          ppp_trend_card,
           chart_card(ns, "usage",       "PLAY USAGE FREQUENCY"),
           chart_card(ns, "outcomes",    "MAKE / MISS / TURNOVER MIX"),
           chart_card(ns, "rev_ppp",     "BALL REVERSALS  vs  PPP"),
@@ -94,7 +132,12 @@ mod_trends_server <- function(id, app_state) {
     # Combined with ragg (set in global.R), this is close to retina crisp.
     output$chart_ppp_trend <- renderPlot({
       req(nrow(all_poss()) > 0)
-      make_chart_ppp_trend(all_poss())
+      # input$ppp_plays_selected is NULL on the very first UI render
+      # (before the selectizeInput has reported its default value).
+      # make_chart_ppp_trend handles NULL/empty by returning a helpful
+      # "pick a play" placeholder.
+      make_chart_ppp_trend(all_poss(),
+                           selected_plays = input$ppp_plays_selected)
     }, bg = "transparent", res = 120)
 
     output$chart_usage <- renderPlot({
@@ -480,9 +523,29 @@ empty_plot <- function(msg) {
 
 # =========================================================================
 # Chart 1 -- PPP by play over sessions
+#
+# UX change (2026-11): the chart no longer plots every play at once --
+# that produced an illegible legend. The user now picks up to 3 plays
+# from a selectizeInput above the chart; the chart filters to those
+# plays only and uses a strong 3-color palette for max contrast.
 # =========================================================================
-make_chart_ppp_trend <- function(df) {
+make_chart_ppp_trend <- function(df, selected_plays = NULL) {
+
+  # Normalize selection: drop NAs/blanks that selectizeInput can emit
+  # between renders, cap at 3 (the UI already enforces this but belt-
+  # and-suspenders), and short-circuit if the user cleared everything.
+  if (!is.null(selected_plays)) {
+    selected_plays <- selected_plays[!is.na(selected_plays) &
+                                       nzchar(selected_plays)]
+    selected_plays <- utils::head(selected_plays, 3)
+  }
+  if (is.null(selected_plays) || length(selected_plays) == 0) {
+    return(empty_plot(
+      "Pick 1-3 plays above to see their trend across sessions"))
+  }
+
   s <- df |>
+    dplyr::filter(play %in% selected_plays) |>
     dplyr::group_by(session_date, play) |>
     dplyr::summarise(
       ppp  = sum(pts, na.rm = TRUE) / dplyr::n(),
@@ -490,26 +553,33 @@ make_chart_ppp_trend <- function(df) {
       .groups = "drop"
     )
 
-  keep_plays <- s |>
-    dplyr::group_by(play) |>
-    dplyr::summarise(tot = sum(poss), .groups = "drop") |>
-    dplyr::filter(tot >= 3) |>
-    dplyr::pull(play)
-
-  s <- dplyr::filter(s, play %in% keep_plays)
-
-  if (nrow(s) == 0 || length(unique(s$session_date)) < 2) {
-    return(empty_plot("Need possessions across at least 2 sessions"))
+  if (nrow(s) == 0) {
+    return(empty_plot("No possessions logged for the selected play(s)"))
   }
+  if (length(unique(s$session_date)) < 2) {
+    return(empty_plot(paste0(
+      "The selected play(s) only appear in one session -- ",
+      "need at least 2 to draw a trend")))
+  }
+
+  # High-contrast 3-color palette for max separation. Fixed per-play
+  # mapping so re-selecting the same plays keeps the same colors.
+  ppp_palette <- stats::setNames(
+    c("#8B0029", "#4A6FA5", "#F2B544"),
+    utils::head(selected_plays, 3)
+  )
 
   ggplot2::ggplot(s, ggplot2::aes(x = session_date, y = ppp,
                                    color = play, group = play)) +
-    ggplot2::geom_line(linewidth = 0.9, alpha = 0.9) +
-    ggplot2::geom_point(ggplot2::aes(size = poss), alpha = 0.9) +
-    ggplot2::scale_size(range = c(1.8, 5), guide = "none") +
-    ggplot2::scale_color_manual(values = rep(NMSU_PALETTE, length.out = 50)) +
+    ggplot2::geom_line(linewidth = 1.0, alpha = 0.95) +
+    ggplot2::geom_point(ggplot2::aes(size = poss), alpha = 0.95) +
+    ggplot2::scale_size(range = c(2.2, 5.5),
+                         name = "Possessions") +
+    ggplot2::scale_color_manual(values = ppp_palette) +
     ggplot2::labs(x = NULL, y = "PPP", color = NULL) +
-    nmsu_theme()
+    nmsu_theme() +
+    ggplot2::guides(color = ggplot2::guide_legend(order = 1),
+                    size  = ggplot2::guide_legend(order = 2))
 }
 
 # =========================================================================
